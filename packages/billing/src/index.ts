@@ -132,3 +132,23 @@ export async function verifyStripeSignature(
   const hex = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
   return hex === expected;
 }
+
+/** Convert an amount to Indian-English words (for invoices). */
+export function amountInWords(amount: number): string {
+  const a = Math.floor(Number(amount) || 0);
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const two = (n: number): string => (n < 20 ? ones[n] : tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : ''));
+  const three = (n: number): string => (n >= 100 ? ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' ' + two(n % 100) : '') : two(n));
+  if (a === 0) return 'Zero Rupees Only';
+  const crore = Math.floor(a / 10000000);
+  const lakh = Math.floor((a % 10000000) / 100000);
+  const thousand = Math.floor((a % 100000) / 1000);
+  const rest = a % 1000;
+  const parts: string[] = [];
+  if (crore) parts.push(`${three(crore)} Crore`);
+  if (lakh) parts.push(`${three(lakh)} Lakh`);
+  if (thousand) parts.push(`${three(thousand)} Thousand`);
+  if (rest) parts.push(three(rest));
+  return parts.join(' ') + ' Rupees Only';
+}
