@@ -114,6 +114,9 @@ once those tables pass ~1M rows. It is guarded so it only runs once.
 
 - `bun run db:health` — size, cache hit ratio, connections, unused indexes,
   slow queries (when `pg_stat_statements` is available).
+- **In-app query stats** — DiagnoAI exposes `GET /api/rpc/health/dbStats`
+  with count, avg, p95, max, and the slowest recent queries. Set
+  `SLOW_QUERY_MS` (default 500) to tune the slow-query threshold.
 - Enable `pg_stat_statements` in the Neon dashboard for query-level stats.
 - Watch Neon's connection count, CPU, and slow-query panels.
 
