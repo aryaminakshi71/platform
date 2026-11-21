@@ -58,35 +58,64 @@ statements. SchoolAI and DiagnoAI now detect `-pooler.` in the URL and set
 SchoolAI, SpectrumAI, and NucleoAI use Upstash Redis (`getOrCache`) for
 dashboard and list endpoints with 1–5 minute TTLs. DiagnoAI has no cache yet.
 
-## Recommended next
+## Also applied
 
-### Short term
+### 6. DiagnoAI caching
 
-1. **Add Redis to DiagnoAI** — copy the `getOrCache` helper and cache the test
-   catalog (140 rows, rarely changes) and dashboard metrics for 5 minutes.
-2. **Replace `select().from(contacts)` in dashboards** with SQL aggregation
-   (`COUNT`, `SUM`, `FILTER`) so large orgs don't load every row into memory.
-   The 5-minute cache hides this today but not at scale.
-3. **Add `updated_at` triggers** if you rely on `updated_at` for sync.
+`apps/api/src/lib/cache.ts` uses Upstash Redis when configured, otherwise a
+bounded in-process TTL cache. Wired into dashboard metrics (2 min) and the test
+catalog (5 min).
 
-### Medium term
+### 7. SQL-aggregated dashboards
 
-4. **Read replica for analytics** — point dashboard/report queries at a Neon
-   read replica so they don't compete with writes.
-5. **Cursor pagination** for large lists (leads, audit logs, attendance)
-   instead of `OFFSET`, which gets slower as the offset grows.
-6. **Partition `audit_logs` and `attendance` by month** once they pass a few
-   million rows.
-7. **Connection pooling via Hyperdrive** in production (Cloudflare) instead of
-   direct Neon connections.
+SpectrumAI and NucleoAI dashboards no longer load every contact/deal into
+memory. They use `COUNT(*) FILTER (WHERE …)` and `SUM(...) FILTER (...)` and a
+single `GROUP BY stage` for the pipeline.
 
-### Ongoing
+### 8. `updated_at` triggers
 
-8. **`pg_stat_statements`** — enable it and review the top 20 queries weekly.
-9. **`EXPLAIN (ANALYZE, BUFFERS)`** on any endpoint that feels slow; look for
-   `Seq Scan` on large tables.
-10. **Monitor Neon metrics** — connection count, CPU, and slow queries in the
-    Neon dashboard.
+`set_updated_at()` + `BEFORE UPDATE` triggers on every table with an
+`updated_at` column (45 / 37 / 36 / 111 across the four apps).
+
+### 9. Read-replica support
+
+`getReadDb()` in every app routes dashboard/analytics reads to
+`DATABASE_READ_URL` when set, falling back to the primary. Dashboards already
+use it.
+
+### 10. Cursor pagination
+
+`apps/api/src/lib/pagination.ts` provides `encodeCursor`/`decodeCursor`.
+NucleoAI's `/leads` and `/audit` accept an optional `cursor` and return
+`nextCursor`; offset pagination still works when no cursor is sent.
+
+### 11. Operational scripts
+
+Each app now has:
+
+```bash
+bun run db:optimize   # indexes + trigram + updated_at triggers
+bun run db:health     # size, cache hit ratio, unused indexes, slow queries
+```
+
+## Read replica setup
+
+1. In the Neon dashboard, create a read replica of the primary branch.
+2. Copy its connection string into `DATABASE_READ_URL` in `.env`.
+3. Restart the API. Dashboard/analytics reads now go to the replica.
+
+## Partitioning
+
+`platform/scripts/partition-high-volume-tables.sql` converts `audit_logs` and
+`attendance` to monthly range partitions. Run it during a maintenance window
+once those tables pass ~1M rows. It is guarded so it only runs once.
+
+## Monitoring
+
+- `bun run db:health` — size, cache hit ratio, connections, unused indexes,
+  slow queries (when `pg_stat_statements` is available).
+- Enable `pg_stat_statements` in the Neon dashboard for query-level stats.
+- Watch Neon's connection count, CPU, and slow-query panels.
 
 ## Verifying
 
@@ -100,4 +129,7 @@ AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid=c.conrelid AND a.attnu
 
 # trigram indexes
 psql "$DATABASE_URL" -c "SELECT count(*) FROM pg_indexes WHERE indexname LIKE 'idx_trgm_%';"
+
+# updated_at triggers
+psql "$DATABASE_URL" -c "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_%_updated_at';"
 ```
